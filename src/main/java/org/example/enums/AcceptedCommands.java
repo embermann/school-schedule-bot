@@ -1,9 +1,9 @@
-package org.example;
+package org.example.enums;
 
 public enum AcceptedCommands {
     UNKNOWN_COMMAND((byte)-1, "unknown_command", ""),
     START((byte) 1, "start", "/start"),
-    STOP((byte) 2, "stop", "/stop"),
+//    STOP((byte) 2, "stop", "/stop"),
     ;
 
     private final byte id;
@@ -17,7 +17,7 @@ public enum AcceptedCommands {
 
     public static AcceptedCommands getByCommand(String command) {
         for (AcceptedCommands c : values()) {
-            if (c.getName().equals(command)) {
+            if (c.getCommand().equals(command)) {
                 return c;
             }
         }

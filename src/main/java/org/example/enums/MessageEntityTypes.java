@@ -1,4 +1,4 @@
-package org.example;
+package org.example.enums;
 
 public enum MessageEntityTypes {
     NOT_FOUND                                                               ((byte)-1, "not_found", "not_found"),
