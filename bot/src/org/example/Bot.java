@@ -6,7 +6,12 @@ import org.example.enums.MessageTextEnum;
 import org.example.enums.RtuDialogStateEnum;
 import org.example.obj.ChatExtended;
 import org.example.obj.RtuFacultyObj;
+import org.example.obj.json.DateTimeObj;
+import org.example.obj.json.RtuGroupObj;
 import org.example.obj.RtuPageDataObj;
+import org.example.obj.json.RtuScheduleObj;
+import org.json.JSONArray;
+import org.json.JSONObject;
 import org.jsoup.Jsoup;
 import org.jsoup.nodes.Document;
 import org.jsoup.nodes.Element;
@@ -29,8 +34,6 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.util.*;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 import java.util.zip.GZIPInputStream;
 
@@ -145,13 +148,23 @@ public class Bot extends TelegramLongPollingBot {
             case GROUP:
                 String selectedGroupId = callbackQuery.getData();
                 currentChat.setSelectedGroupId(selectedGroupId);
+                for (RtuGroupObj rtuGroupObj : rtuPageDataObj.getGroupObjSet()) {
+                    if (rtuGroupObj.equalsToChatExtended(currentChat)) {
+                        currentChat.setSelectedSemesterProgramId(String.valueOf(rtuGroupObj.getSemesterProgramId()));
+                        break;
+                    }
+                }
+
+
                 try {
                     execute(sendAnswerCallbackQuery(callbackQuery.getId()));
                     execute(sendEditMessageReplyMarkup(currentChat.getMessageId(), currentChat.getChatData().getId(), null));
+                    execute(sendRtuScheduleMessage(getRtuScheduleInTextFormat(currentChat), currentChat.getChatData().getId()));
                 } catch (TelegramApiException e) {
                     throw new RuntimeException(e);
                 }
                 break;
+
         }
     }
 
@@ -191,6 +204,9 @@ public class Bot extends TelegramLongPollingBot {
 
     }
 
+    /**
+     * Getting keyboards
+     * **/
     private InlineKeyboardMarkup getKeyboardMarkupForRtuSemesters() {
         Map<String, String> semesterData = rtuPageDataObj.getAvailableSemesterList();
 
@@ -204,6 +220,7 @@ public class Bot extends TelegramLongPollingBot {
         }
         return new InlineKeyboardMarkup(buttonRows);
     }
+
     private InlineKeyboardMarkup getKeyboardMarkupForRtuCourses(ChatExtended currentChat) {
         byte[] courseList = getRtuCourses(currentChat);
 
@@ -220,13 +237,13 @@ public class Bot extends TelegramLongPollingBot {
     }
 
     private InlineKeyboardMarkup getKeyboardMarkupForRtuGroups(ChatExtended currentChat) {
-        HashMap<String, String> map = getRtuGroups(currentChat);
+        List<RtuGroupObj> list = getRtuGroups(currentChat);
 
         ArrayList<List<InlineKeyboardButton>> buttonRows = new ArrayList<>();
-        for (String group : map.keySet()) {
+        for (RtuGroupObj obj : list) {
             ArrayList<InlineKeyboardButton> buttonRow = new ArrayList<>(1);
-            InlineKeyboardButton button = new InlineKeyboardButton(group);
-            button.setCallbackData(group);
+            InlineKeyboardButton button = new InlineKeyboardButton(obj.getGroup());
+            button.setCallbackData(obj.getGroup());
             buttonRow.add(button);
             buttonRows.add(buttonRow);
         }
@@ -300,7 +317,7 @@ public class Bot extends TelegramLongPollingBot {
 
     }
 
-    private HashMap<String, String> getRtuGroups(ChatExtended currentChat) {
+    private List<RtuGroupObj> getRtuGroups(ChatExtended currentChat) {
         HttpClient httpClient = HttpClient.newHttpClient();
 
         try {
@@ -321,35 +338,26 @@ public class Bot extends TelegramLongPollingBot {
             BufferedReader in = new BufferedReader(reader);
 
             String read = in.lines().collect(Collectors.joining());
-            read = read.replaceAll("\"", "");
+            JSONArray arr = new JSONArray(read);
 
-            Pattern groupPattern = Pattern.compile("group:(\\d+)");
-            Pattern semesterProgramIdPattern = Pattern.compile("semesterProgramId:(\\d+)");
-            Matcher groupMatcher = groupPattern.matcher(read);
-            Matcher semesterProgramIdMatcher = semesterProgramIdPattern.matcher(read);
-
-            StringBuilder groupMatch = new StringBuilder();
-            while (groupMatcher.find()) {
-                groupMatch.append(groupMatcher.group(0));
-            }
-            ArrayList<String> groupList = Arrays.stream(groupMatch.toString().split("group:"))
-                    .collect(Collectors.toCollection(ArrayList::new));
-            groupList.removeIf(String::isEmpty);
-
-            StringBuilder semesterProgramIdMatch = new StringBuilder();
-            while (semesterProgramIdMatcher.find()) {
-                semesterProgramIdMatch.append(semesterProgramIdMatcher.group(0));
-            }
-            ArrayList<String> semesterProgramIdList = Arrays.stream(semesterProgramIdMatch.toString().split("semesterProgramId:"))
-                    .collect(Collectors.toCollection(ArrayList::new));
-            semesterProgramIdList.removeIf(String::isEmpty);
-
-            HashMap<String, String> map = new HashMap<>(groupList.size());
-            for (int i = 0; i < groupList.size(); i++) {
-                map.put(groupList.get(i), semesterProgramIdList.get(i));
+            HashSet<RtuGroupObj> rtuGroupObjHashSet = new HashSet<>();
+            for (int i = 0; i < arr.length(); i++) {
+                JSONObject obj = arr.getJSONObject(i);
+                RtuGroupObj rtuGroupObj = new RtuGroupObj(
+                        obj.getInt("semesterProgramId"),
+                        obj.getInt("semesterId"),
+                        obj.getInt("programId"),
+                        obj.getInt("course"),
+                        obj.getString("group")
+                );
+                rtuPageDataObj.getGroupObjSet().add(rtuGroupObj);
+                rtuGroupObjHashSet.add(rtuGroupObj);
             }
 
-            return map;
+            List<RtuGroupObj> list = new ArrayList<>(rtuGroupObjHashSet);
+            list.sort(new SortByGroup());
+
+            return list;
 
         } catch (URISyntaxException | IOException | InterruptedException e) {
             throw new RuntimeException(e);
@@ -417,14 +425,17 @@ public class Bot extends TelegramLongPollingBot {
         rtuPageDataObj.setFacultyObjList(rtuFacultyObjList);
     }
 
-    private byte[] getRtuSchedule(ChatExtended currentChat) {
+    private HashSet<RtuScheduleObj> getRtuSchedule(ChatExtended currentChat) {
         HttpClient httpClient = HttpClient.newHttpClient();
+        Calendar calendar = Calendar.getInstance();
 
         try {
-            String body = "semesterId=" + currentChat.getSelectedSemesterId() + "&" + "programId=" + currentChat.getSelectedProgramId();
+            String body = "semesterProgramId=" + currentChat.getSelectedSemesterProgramId() +
+                    "&year=" + calendar.get(Calendar.YEAR) +
+                    "&month=" + calendar.get(Calendar.MONTH);
 
             HttpRequest request = HttpRequest.newBuilder()
-                    .uri(new URI("https://nodarbibas.rtu.lv/findCourseByProgramId"))
+                    .uri(new URI("https://nodarbibas.rtu.lv/getSemesterProgEventList"))
                     .POST(HttpRequest.BodyPublishers.ofString(body))
                     .version(HttpClient.Version.HTTP_2)
                     .headers(HEADERS)
@@ -436,21 +447,67 @@ public class Bot extends TelegramLongPollingBot {
             BufferedReader in = new BufferedReader(reader);
 
             String read = in.lines().collect(Collectors.joining());
+            JSONArray arr = new JSONArray(read);
 
-            String[] string = read.replaceAll("\\[", "")
-                    .replaceAll("]", "")
-                    .split(",");
-            byte[] arr = new byte[string.length];
-            for (byte i = 0; i < string.length; i++) {
-                arr[i] = Byte.parseByte(string[i]);
+            HashSet<RtuScheduleObj> rtuScheduleObjHashSet = new HashSet<>();
+            for (int i = 0; i < arr.length(); i++) {
+                JSONObject obj = arr.getJSONObject(i);
+                JSONObject customStart = (JSONObject) obj.get("customStart");
+                JSONObject customEnd = (JSONObject) obj.get("customEnd");
+                RtuScheduleObj rtuScheduleObj = new RtuScheduleObj(
+                        obj.getInt("eventDateId"),
+                        obj.getInt("eventId"),
+                        obj.getInt("statusId"),
+                        obj.getString("eventTempName"),
+                        obj.getString("roomInfoText"),
+                        obj.getString("eventTempNameEn"),
+                        obj.getString("roomInfoTextEn"),
+                        obj.getLong("eventDate"),
+                        new DateTimeObj(customStart.getInt("hour"),
+                                customStart.getInt("minute"),
+                                customStart.getInt("second"),
+                                customStart.getInt("nano")),
+                        new DateTimeObj(customEnd.getInt("hour"),
+                                customEnd.getInt("minute"),
+                                customEnd.getInt("second"),
+                                customEnd.getInt("nano"))
+                );
+                rtuScheduleObjHashSet.add(rtuScheduleObj);
             }
 
-            return arr;
+            return rtuScheduleObjHashSet;
 
         } catch (URISyntaxException | IOException | InterruptedException e) {
             throw new RuntimeException(e);
         }
 
+    }
+    /**
+     * Preparing text for messages
+     * **/
+
+    private String getRtuScheduleInTextFormat(ChatExtended currentChat) {
+        HashSet<RtuScheduleObj> rtuScheduleObjHashSet = getRtuSchedule(currentChat);
+        StringBuilder result = new StringBuilder();
+        for (RtuScheduleObj obj : rtuScheduleObjHashSet) {
+            StringBuilder sb = new StringBuilder();
+            Calendar cal = Calendar.getInstance();
+            Calendar now = Calendar.getInstance();
+            cal.setTime(new Date(obj.getEventDate()));
+            DateTimeObj start = obj.getCustomStart();
+            DateTimeObj end = obj.getCustomEnd();
+            if (now.get(Calendar.WEEK_OF_MONTH) == cal.get(Calendar.WEEK_OF_MONTH)) {
+                sb.append("Class: ").append(obj.getEventTempName()).append("\n")
+                        .append("Room: ").append(obj.getRoomInfoText()).append("\n")
+                        .append("Date: ").append(cal.get(Calendar.DAY_OF_MONTH)).append("/").append(cal.get(Calendar.MONTH)).append("\n")
+                        .append("Time: ").append(start.getHour()).append(":").append(start.getMinute()).append("-").append(end.getHour()).append(":").append(end.getMinute()).append("\n");
+
+                result.append(sb).append("\n");
+            }
+
+        }
+//        System.out.println(result.toString().length());
+        return result.toString();
     }
 
     /**
@@ -461,6 +518,13 @@ public class Bot extends TelegramLongPollingBot {
                 .chatId(chatId)
                 .text(MessageTextEnum.START_MESSAGE.getMessage())
                 .parseMode("HTML")
+                .build();
+    }
+
+    private SendMessage sendRtuScheduleMessage(String schedule, Long chatId) {
+        return SendMessage.builder()
+                .chatId(chatId)
+                .text(schedule)
                 .build();
     }
 
@@ -482,5 +546,11 @@ public class Bot extends TelegramLongPollingBot {
                 .text(messageText)
                 .replyMarkup(inlineKeyboardMarkup)
                 .build();
+    }
+
+    public static class SortByGroup implements Comparator<RtuGroupObj> {
+        public int compare(RtuGroupObj a, RtuGroupObj b) {
+            return Integer.valueOf(a.getGroup()).compareTo(Integer.valueOf(b.getGroup()));
+        }
     }
 }

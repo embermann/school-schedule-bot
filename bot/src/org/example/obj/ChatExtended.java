@@ -10,6 +10,7 @@ public class ChatExtended {
     private String selectedProgramId;
     private String selectedCourseId;
     private String selectedGroupId;
+    private String selectedSemesterProgramId;
     private String selectedSemesterId;
     private RtuDialogStateEnum state;
     private Chat chatData;
@@ -18,6 +19,14 @@ public class ChatExtended {
         this.inlineDialogInitiated = false;
         this.state = RtuDialogStateEnum.NOTHING;
         this.chatData = chatData;
+    }
+
+    public String getSelectedSemesterProgramId() {
+        return selectedSemesterProgramId;
+    }
+
+    public void setSelectedSemesterProgramId(String selectedSemesterProgramId) {
+        this.selectedSemesterProgramId = selectedSemesterProgramId;
     }
 
     public String getSelectedSemesterId() {
