@@ -1,7 +1,5 @@
 package org.example.enums;
 
-import org.telegram.telegrambots.meta.api.objects.MessageEntity;
-
 public enum MessageTextEnum {
 
     START_MESSAGE(

@@ -4,6 +4,7 @@ public enum AcceptedCommands {
     UNKNOWN_COMMAND((byte)-1, "unknown_command", ""),
     START((byte) 1, "start", "/start"),
 //    STOP((byte) 2, "stop", "/stop"),
+    RTU((byte) 3, "RTU", "/rtu"),
     ;
 
     private final byte id;

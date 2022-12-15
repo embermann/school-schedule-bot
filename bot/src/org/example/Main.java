@@ -18,7 +18,7 @@ public class Main {
         try {
             LOG.info("Starting Telegram bot");
             TelegramBotsApi telegramBotsApi = new TelegramBotsApi(DefaultBotSession.class);
-            DefaultBotSession session = (DefaultBotSession) telegramBotsApi.registerBot(new Bot(getBotProperties()));
+            telegramBotsApi.registerBot(new Bot(getBotProperties()));
             LOG.info("Telegram Bot started");
         } catch (TelegramApiException e) {
             throw new RuntimeException(e);
@@ -28,10 +28,11 @@ public class Main {
 
     private static Properties getBotProperties() {
         Properties properties = new Properties();
-        InputStream input = null;
+        InputStream input;
         try {
             input = new FileInputStream("bot.properties");
             properties.load(input);
+            input.close();
         } catch (IOException e) {
             throw new RuntimeException(e);
         }
