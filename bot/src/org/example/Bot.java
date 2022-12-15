@@ -43,8 +43,8 @@ public class Bot extends TelegramLongPollingBot {
 
     private final Properties properties;
     private final String[] HEADERS = new String[]{"User-Agent", "Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:107.0) Gecko/20100101 Firefox/107.0", "Accept", "*/*", "Accept-Encoding", "gzip, deflate, br", "Content-Type", "application/x-www-form-urlencoded; charset=UTF-8"};
-    private RtuPageDataObj rtuPageDataObj;
-    private HashMap<Long, ChatExtended> chats;
+    private final RtuPageDataObj rtuPageDataObj;
+    private final HashMap<Long, ChatExtended> chats;
     public Bot(Properties properties) {
 
         this.properties = properties;
@@ -94,57 +94,49 @@ public class Bot extends TelegramLongPollingBot {
             Long chatId = message.getChatId();
             ChatExtended currentChat = chats.get(chatId);
 
-            parseCallbacks(currentChat, callbackQuery);
+            try {
+                parseCallbacks(currentChat, callbackQuery);
+            } catch (TelegramApiException e) {
+                throw new RuntimeException(e);
+            }
 
         }
     }
 
-    private void parseCallbacks(ChatExtended currentChat, CallbackQuery callbackQuery) {
+    private void parseCallbacks(ChatExtended currentChat, CallbackQuery callbackQuery) throws TelegramApiException {
         switch (currentChat.getState()) {
             case SEMESTER:
                 currentChat.setInlineDialogInitiated(true);
                 String selectedSemesterId = callbackQuery.getData();
                 currentChat.setState(RtuDialogStateEnum.FACULTY);
                 currentChat.setSelectedSemesterId(selectedSemesterId);
-                try {
-                    execute(sendAnswerCallbackQuery(callbackQuery.getId()));
-                    execute(sendEditMessageReplyMarkup(currentChat.getMessageId(), currentChat.getChatData().getId(), getKeyboardMarkupForRtuFaculties()));
-                } catch (TelegramApiException e) {
-                    throw new RuntimeException(e);
-                }
+                execute(sendAnswerCallbackQuery(callbackQuery.getId()));
+                execute(sendEditMessageReplyMarkup(currentChat.getMessageId(), currentChat.getChatData().getId(), getKeyboardMarkupForRtuFaculties()));
                 break;
+
             case FACULTY:
                 String selectedFacultyId = callbackQuery.getData();
                 currentChat.setState(RtuDialogStateEnum.PROGRAM);
-                try {
-                    execute(sendAnswerCallbackQuery(callbackQuery.getId()));
-                    execute(sendEditMessageReplyMarkup(currentChat.getMessageId(), currentChat.getChatData().getId(), getKeyboardMarkupForRtuPrograms(selectedFacultyId)));
-                } catch (TelegramApiException e) {
-                    throw new RuntimeException(e);
-                }
+                execute(sendAnswerCallbackQuery(callbackQuery.getId()));
+                execute(sendEditMessageReplyMarkup(currentChat.getMessageId(), currentChat.getChatData().getId(), getKeyboardMarkupForRtuPrograms(selectedFacultyId)));
                 break;
+
             case PROGRAM:
                 String selectedProgramId = callbackQuery.getData();
                 currentChat.setState(RtuDialogStateEnum.COURSE);
                 currentChat.setSelectedProgramId(selectedProgramId);
-                try {
-                    execute(sendAnswerCallbackQuery(callbackQuery.getId()));
-                    execute(sendEditMessageReplyMarkup(currentChat.getMessageId(), currentChat.getChatData().getId(), getKeyboardMarkupForRtuCourses(currentChat)));
-                } catch (TelegramApiException e) {
-                    throw new RuntimeException(e);
-                }
+                execute(sendAnswerCallbackQuery(callbackQuery.getId()));
+                execute(sendEditMessageReplyMarkup(currentChat.getMessageId(), currentChat.getChatData().getId(), getKeyboardMarkupForRtuCourses(currentChat)));
                 break;
+
             case COURSE:
                 String selectedCourseId = callbackQuery.getData();
                 currentChat.setState(RtuDialogStateEnum.GROUP);
                 currentChat.setSelectedCourseId(selectedCourseId);
-                try {
-                    execute(sendAnswerCallbackQuery(callbackQuery.getId()));
-                    execute(sendEditMessageReplyMarkup(currentChat.getMessageId(), currentChat.getChatData().getId(), getKeyboardMarkupForRtuGroups(currentChat)));
-                } catch (TelegramApiException e) {
-                    throw new RuntimeException(e);
-                }
+                execute(sendAnswerCallbackQuery(callbackQuery.getId()));
+                execute(sendEditMessageReplyMarkup(currentChat.getMessageId(), currentChat.getChatData().getId(), getKeyboardMarkupForRtuGroups(currentChat)));
                 break;
+
             case GROUP:
                 String selectedGroupId = callbackQuery.getData();
                 currentChat.setSelectedGroupId(selectedGroupId);
@@ -155,14 +147,9 @@ public class Bot extends TelegramLongPollingBot {
                     }
                 }
 
-
-                try {
-                    execute(sendAnswerCallbackQuery(callbackQuery.getId()));
-                    execute(sendEditMessageReplyMarkup(currentChat.getMessageId(), currentChat.getChatData().getId(), null));
-                    execute(sendRtuScheduleMessage(getRtuScheduleInTextFormat(currentChat), currentChat.getChatData().getId()));
-                } catch (TelegramApiException e) {
-                    throw new RuntimeException(e);
-                }
+                execute(sendAnswerCallbackQuery(callbackQuery.getId()));
+                execute(sendEditMessageReplyMarkup(currentChat.getMessageId(), currentChat.getChatData().getId(), null));
+                execute(sendRtuScheduleMessage(getRtuScheduleInTextFormat(currentChat), currentChat.getChatData().getId()));
                 break;
 
         }
@@ -196,7 +183,7 @@ public class Bot extends TelegramLongPollingBot {
             case RTU:
                 LOG.info("Found {} command in chat: {}", AcceptedCommands.RTU.getName(), chatId);
                 currentChat.setState(RtuDialogStateEnum.SEMESTER);
-                Message sentMessage = execute(sendInlineKeyboard(chatId, "Choose", getKeyboardMarkupForRtuSemesters()));
+                Message sentMessage = execute(sendInlineKeyboard(chatId, getKeyboardMarkupForRtuSemesters()));
                 chats.get(chatId).setMessageId(sentMessage.getMessageId());
                 break;
             case UNKNOWN_COMMAND: // == default
@@ -222,10 +209,10 @@ public class Bot extends TelegramLongPollingBot {
     }
 
     private InlineKeyboardMarkup getKeyboardMarkupForRtuCourses(ChatExtended currentChat) {
-        byte[] courseList = getRtuCourses(currentChat);
+        List<Integer> courseList = getRtuCourses(currentChat);
 
         ArrayList<List<InlineKeyboardButton>> buttonRows = new ArrayList<>();
-        for (byte course : courseList) {
+        for (Integer course : courseList) {
             String courseStr = String.valueOf(course);
             ArrayList<InlineKeyboardButton> buttonRow = new ArrayList<>(1);
             InlineKeyboardButton button = new InlineKeyboardButton(courseStr);
@@ -281,88 +268,46 @@ public class Bot extends TelegramLongPollingBot {
     /**
      * Scraping websites/responses/preparing data for keyboards
      * **/
-    private byte[] getRtuCourses(ChatExtended currentChat) {
-        HttpClient httpClient = HttpClient.newHttpClient();
+    private List<Integer> getRtuCourses(ChatExtended currentChat) {
+        String body = "semesterId=" + currentChat.getSelectedSemesterId() + "&" + "programId=" + currentChat.getSelectedProgramId();
 
-        try {
-            String body = "semesterId=" + currentChat.getSelectedSemesterId() + "&" + "programId=" + currentChat.getSelectedProgramId();
+        String responseBody = getResponseBody("https://nodarbibas.rtu.lv/findCourseByProgramId", body);
 
-            HttpRequest request = HttpRequest.newBuilder()
-                    .uri(new URI("https://nodarbibas.rtu.lv/findCourseByProgramId"))
-                    .POST(HttpRequest.BodyPublishers.ofString(body))
-                    .version(HttpClient.Version.HTTP_2)
-                    .headers(HEADERS)
-                    .build();
-
-            HttpResponse<byte[]> response = httpClient.send(request, HttpResponse.BodyHandlers.ofByteArray());
-            GZIPInputStream gzipInputStream = new GZIPInputStream(new ByteArrayInputStream(response.body()));
-            InputStreamReader reader = new InputStreamReader(gzipInputStream);
-            BufferedReader in = new BufferedReader(reader);
-
-            String read = in.lines().collect(Collectors.joining());
-
-            String[] string = read.replaceAll("\\[", "")
-                    .replaceAll("]", "")
-                    .split(",");
-            byte[] arr = new byte[string.length];
-            for (byte i = 0; i < string.length; i++) {
-                arr[i] = Byte.parseByte(string[i]);
-            }
-
-            return arr;
-
-        } catch (URISyntaxException | IOException | InterruptedException e) {
-            throw new RuntimeException(e);
+        JSONArray jsonArray = new JSONArray(responseBody);
+        List<Integer> list = new ArrayList<>();
+        for (Object o : jsonArray) {
+            list.add((Integer) o);
         }
+        return list;
 
     }
 
     private List<RtuGroupObj> getRtuGroups(ChatExtended currentChat) {
-        HttpClient httpClient = HttpClient.newHttpClient();
+        String body = "courseId=" + currentChat.getSelectedCourseId() +
+                "&semesterId=" + currentChat.getSelectedSemesterId() +
+                "&programId=" + currentChat.getSelectedProgramId();
 
-        try {
-            String body = "courseId=" + currentChat.getSelectedCourseId() +
-                    "&semesterId=" + currentChat.getSelectedSemesterId() +
-                    "&programId=" + currentChat.getSelectedProgramId();
+        String responseBody = getResponseBody("https://nodarbibas.rtu.lv/findGroupByCourseId", body);
+        JSONArray arr = new JSONArray(responseBody);
 
-            HttpRequest request = HttpRequest.newBuilder()
-                    .uri(new URI("https://nodarbibas.rtu.lv/findGroupByCourseId"))
-                    .POST(HttpRequest.BodyPublishers.ofString(body))
-                    .version(HttpClient.Version.HTTP_2)
-                    .headers(HEADERS)
-                    .build();
-
-            HttpResponse<byte[]> response = httpClient.send(request, HttpResponse.BodyHandlers.ofByteArray());
-            GZIPInputStream gzipInputStream = new GZIPInputStream(new ByteArrayInputStream(response.body()));
-            InputStreamReader reader = new InputStreamReader(gzipInputStream);
-            BufferedReader in = new BufferedReader(reader);
-
-            String read = in.lines().collect(Collectors.joining());
-            JSONArray arr = new JSONArray(read);
-
-            HashSet<RtuGroupObj> rtuGroupObjHashSet = new HashSet<>();
-            for (int i = 0; i < arr.length(); i++) {
-                JSONObject obj = arr.getJSONObject(i);
-                RtuGroupObj rtuGroupObj = new RtuGroupObj(
-                        obj.getInt("semesterProgramId"),
-                        obj.getInt("semesterId"),
-                        obj.getInt("programId"),
-                        obj.getInt("course"),
-                        obj.getString("group")
-                );
-                rtuPageDataObj.getGroupObjSet().add(rtuGroupObj);
-                rtuGroupObjHashSet.add(rtuGroupObj);
-            }
-
-            List<RtuGroupObj> list = new ArrayList<>(rtuGroupObjHashSet);
-            list.sort(new SortByGroup());
-
-            return list;
-
-        } catch (URISyntaxException | IOException | InterruptedException e) {
-            throw new RuntimeException(e);
+        HashSet<RtuGroupObj> rtuGroupObjHashSet = new HashSet<>();
+        for (int i = 0; i < arr.length(); i++) {
+            JSONObject obj = arr.getJSONObject(i);
+            RtuGroupObj rtuGroupObj = new RtuGroupObj(
+                    obj.getInt("semesterProgramId"),
+                    obj.getInt("semesterId"),
+                    obj.getInt("programId"),
+                    obj.getInt("course"),
+                    obj.getString("group")
+            );
+            rtuPageDataObj.getGroupObjSet().add(rtuGroupObj);
+            rtuGroupObjHashSet.add(rtuGroupObj);
         }
 
+        List<RtuGroupObj> list = new ArrayList<>(rtuGroupObjHashSet);
+        list.sort(new SortByGroup());
+
+        return list;
     }
 
     private void scrapRtuPage() {
@@ -426,61 +371,42 @@ public class Bot extends TelegramLongPollingBot {
     }
 
     private HashSet<RtuScheduleObj> getRtuSchedule(ChatExtended currentChat) {
-        HttpClient httpClient = HttpClient.newHttpClient();
         Calendar calendar = Calendar.getInstance();
 
-        try {
-            String body = "semesterProgramId=" + currentChat.getSelectedSemesterProgramId() +
-                    "&year=" + calendar.get(Calendar.YEAR) +
-                    "&month=" + calendar.get(Calendar.MONTH);
+        String body = "semesterProgramId=" + currentChat.getSelectedSemesterProgramId() +
+                "&year=" + calendar.get(Calendar.YEAR) +
+                "&month=" + calendar.get(Calendar.MONTH);
 
-            HttpRequest request = HttpRequest.newBuilder()
-                    .uri(new URI("https://nodarbibas.rtu.lv/getSemesterProgEventList"))
-                    .POST(HttpRequest.BodyPublishers.ofString(body))
-                    .version(HttpClient.Version.HTTP_2)
-                    .headers(HEADERS)
-                    .build();
+        String responseBody = getResponseBody("https://nodarbibas.rtu.lv/getSemesterProgEventList", body);
+        JSONArray arr = new JSONArray(responseBody);
 
-            HttpResponse<byte[]> response = httpClient.send(request, HttpResponse.BodyHandlers.ofByteArray());
-            GZIPInputStream gzipInputStream = new GZIPInputStream(new ByteArrayInputStream(response.body()));
-            InputStreamReader reader = new InputStreamReader(gzipInputStream);
-            BufferedReader in = new BufferedReader(reader);
-
-            String read = in.lines().collect(Collectors.joining());
-            JSONArray arr = new JSONArray(read);
-
-            HashSet<RtuScheduleObj> rtuScheduleObjHashSet = new HashSet<>();
-            for (int i = 0; i < arr.length(); i++) {
-                JSONObject obj = arr.getJSONObject(i);
-                JSONObject customStart = (JSONObject) obj.get("customStart");
-                JSONObject customEnd = (JSONObject) obj.get("customEnd");
-                RtuScheduleObj rtuScheduleObj = new RtuScheduleObj(
-                        obj.getInt("eventDateId"),
-                        obj.getInt("eventId"),
-                        obj.getInt("statusId"),
-                        obj.getString("eventTempName"),
-                        obj.getString("roomInfoText"),
-                        obj.getString("eventTempNameEn"),
-                        obj.getString("roomInfoTextEn"),
-                        obj.getLong("eventDate"),
-                        new DateTimeObj(customStart.getInt("hour"),
-                                customStart.getInt("minute"),
-                                customStart.getInt("second"),
-                                customStart.getInt("nano")),
-                        new DateTimeObj(customEnd.getInt("hour"),
-                                customEnd.getInt("minute"),
-                                customEnd.getInt("second"),
-                                customEnd.getInt("nano"))
-                );
-                rtuScheduleObjHashSet.add(rtuScheduleObj);
-            }
-
-            return rtuScheduleObjHashSet;
-
-        } catch (URISyntaxException | IOException | InterruptedException e) {
-            throw new RuntimeException(e);
+        HashSet<RtuScheduleObj> rtuScheduleObjHashSet = new HashSet<>();
+        for (int i = 0; i < arr.length(); i++) {
+            JSONObject obj = arr.getJSONObject(i);
+            JSONObject customStart = (JSONObject) obj.get("customStart");
+            JSONObject customEnd = (JSONObject) obj.get("customEnd");
+            RtuScheduleObj rtuScheduleObj = new RtuScheduleObj(
+                    obj.getInt("eventDateId"),
+                    obj.getInt("eventId"),
+                    obj.getInt("statusId"),
+                    obj.getString("eventTempName"),
+                    obj.getString("roomInfoText"),
+                    obj.getString("eventTempNameEn"),
+                    obj.getString("roomInfoTextEn"),
+                    obj.getLong("eventDate"),
+                    new DateTimeObj(customStart.getInt("hour"),
+                            customStart.getInt("minute"),
+                            customStart.getInt("second"),
+                            customStart.getInt("nano")),
+                    new DateTimeObj(customEnd.getInt("hour"),
+                            customEnd.getInt("minute"),
+                            customEnd.getInt("second"),
+                            customEnd.getInt("nano"))
+            );
+            rtuScheduleObjHashSet.add(rtuScheduleObj);
         }
 
+        return rtuScheduleObjHashSet;
     }
     /**
      * Preparing text for messages
@@ -540,12 +466,42 @@ public class Bot extends TelegramLongPollingBot {
                 .build();
     }
 
-    private SendMessage sendInlineKeyboard(Long chatId, String messageText, InlineKeyboardMarkup inlineKeyboardMarkup) {
+    private SendMessage sendInlineKeyboard(Long chatId, InlineKeyboardMarkup inlineKeyboardMarkup) {
         return SendMessage.builder()
                 .chatId(chatId)
-                .text(messageText)
+                .text("Choose")
                 .replyMarkup(inlineKeyboardMarkup)
                 .build();
+    }
+
+    /**
+     * Utils
+     * **/
+
+    private HttpRequest prepareRequest(String uri, String body) throws URISyntaxException {
+        return HttpRequest.newBuilder()
+                .uri(new URI(uri))
+                .POST(HttpRequest.BodyPublishers.ofString(body))
+                .version(HttpClient.Version.HTTP_2)
+                .headers(HEADERS)
+                .build();
+    }
+
+    private String getResponseBody(String uri, String body) {
+        HttpClient httpClient = HttpClient.newHttpClient();
+
+        HttpResponse<byte[]> response;
+        GZIPInputStream gzipInputStream;
+        try {
+            response = httpClient.send(prepareRequest(uri, body), HttpResponse.BodyHandlers.ofByteArray());
+            gzipInputStream = new GZIPInputStream(new ByteArrayInputStream(response.body()));
+        } catch (IOException | URISyntaxException | InterruptedException e) {
+            throw new RuntimeException(e);
+        }
+        InputStreamReader reader = new InputStreamReader(gzipInputStream);
+        BufferedReader in = new BufferedReader(reader);
+
+        return in.lines().collect(Collectors.joining());
     }
 
     public static class SortByGroup implements Comparator<RtuGroupObj> {
