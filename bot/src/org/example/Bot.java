@@ -22,35 +22,52 @@ import org.telegram.telegrambots.bots.TelegramLongPollingBot;
 import org.telegram.telegrambots.meta.api.methods.AnswerCallbackQuery;
 import org.telegram.telegrambots.meta.api.methods.send.SendMessage;
 import org.telegram.telegrambots.meta.api.methods.updatingmessages.EditMessageReplyMarkup;
-import org.telegram.telegrambots.meta.api.objects.*;
+import org.telegram.telegrambots.meta.api.objects.CallbackQuery;
+import org.telegram.telegrambots.meta.api.objects.Chat;
+import org.telegram.telegrambots.meta.api.objects.Message;
+import org.telegram.telegrambots.meta.api.objects.MessageEntity;
+import org.telegram.telegrambots.meta.api.objects.Update;
 import org.telegram.telegrambots.meta.api.objects.replykeyboard.InlineKeyboardMarkup;
 import org.telegram.telegrambots.meta.api.objects.replykeyboard.buttons.InlineKeyboardButton;
 import org.telegram.telegrambots.meta.exceptions.TelegramApiException;
 
-import java.io.*;
+import java.io.BufferedReader;
+import java.io.ByteArrayInputStream;
+import java.io.FileReader;
+import java.io.IOException;
+import java.io.InputStreamReader;
 import java.net.URI;
 import java.net.URISyntaxException;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.Calendar;
+import java.util.Comparator;
+import java.util.Date;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.LinkedList;
+import java.util.List;
+import java.util.Map;
+import java.util.Properties;
 import java.util.stream.Collectors;
 import java.util.zip.GZIPInputStream;
 
 public class Bot extends TelegramLongPollingBot {
 
-    Logger LOG =  LoggerFactory.getLogger(Bot.class);
-
+    private final Logger LOG = LoggerFactory.getLogger(Bot.class);
     private final Properties properties;
-    private final String[] HEADERS = new String[]{"User-Agent", "Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:107.0) Gecko/20100101 Firefox/107.0", "Accept", "*/*", "Accept-Encoding", "gzip, deflate, br", "Content-Type", "application/x-www-form-urlencoded; charset=UTF-8"};
+    private final String[] requestHeaders;
     private final RtuPageDataObj rtuPageDataObj;
     private final HashMap<Long, ChatExtended> chats;
     public Bot(Properties properties) {
-
         this.properties = properties;
+
         this.chats = new HashMap<>();
         this.rtuPageDataObj = new RtuPageDataObj();
         this.scrapRtuPage();
+        this.requestHeaders = this.getRequestHeadersFromFile();
     }
 
     @Override
@@ -152,6 +169,8 @@ public class Bot extends TelegramLongPollingBot {
                 execute(sendRtuScheduleMessage(getRtuScheduleInTextFormat(currentChat), currentChat.getChatData().getId()));
                 break;
 
+            default:
+                throw new IllegalStateException("Unexpected value: " + currentChat.getState());
         }
     }
 
@@ -168,6 +187,9 @@ public class Bot extends TelegramLongPollingBot {
                     break;
 
                 case NOT_FOUND: // == default
+                    break;
+                default:
+                    throw new IllegalStateException("Unexpected value: " + MessageEntityTypes.getByName(entity.getType()));
             }
 
         }
@@ -187,6 +209,9 @@ public class Bot extends TelegramLongPollingBot {
                 chats.get(chatId).setMessageId(sentMessage.getMessageId());
                 break;
             case UNKNOWN_COMMAND: // == default
+                break;
+            default:
+                throw new IllegalStateException("Unexpected value: " + AcceptedCommands.getByCommand(entity.getText()));
         }
 
     }
@@ -198,7 +223,7 @@ public class Bot extends TelegramLongPollingBot {
         Map<String, String> semesterData = rtuPageDataObj.getAvailableSemesterList();
 
         ArrayList<List<InlineKeyboardButton>> buttonRows = new ArrayList<>();
-        for (Map.Entry<String,String> semester : semesterData.entrySet()) {
+        for (Map.Entry<String, String> semester : semesterData.entrySet()) {
             ArrayList<InlineKeyboardButton> buttonRow = new ArrayList<>(1);
             InlineKeyboardButton button = new InlineKeyboardButton(semester.getValue());
             button.setCallbackData(semester.getKey());
@@ -283,9 +308,9 @@ public class Bot extends TelegramLongPollingBot {
     }
 
     private List<RtuGroupObj> getRtuGroups(ChatExtended currentChat) {
-        String body = "courseId=" + currentChat.getSelectedCourseId() +
-                "&semesterId=" + currentChat.getSelectedSemesterId() +
-                "&programId=" + currentChat.getSelectedProgramId();
+        String body = "courseId=" + currentChat.getSelectedCourseId()
+                + "&semesterId=" + currentChat.getSelectedSemesterId()
+                + "&programId=" + currentChat.getSelectedProgramId();
 
         String responseBody = getResponseBody("https://nodarbibas.rtu.lv/findGroupByCourseId", body);
         JSONArray arr = new JSONArray(responseBody);
@@ -310,72 +335,12 @@ public class Bot extends TelegramLongPollingBot {
         return list;
     }
 
-    private void scrapRtuPage() {
-        Document doc;
-        try {
-            doc = Jsoup.connect("https://nodarbibas.rtu.lv").get();
-        } catch (IOException e) {
-            throw new RuntimeException(e);
-        }
-
-        Element semesterSelect = doc.getElementById("semester-id");
-        if (semesterSelect == null) throw new RuntimeException("No semester node found in document");
-
-        Elements semesterSelectChildren = semesterSelect.children();
-        if (semesterSelectChildren.size() == 0)
-            throw new RuntimeException("No semesterSelect children found in document");
-
-        for (Element semesterSelectChild : semesterSelectChildren) {
-            String key = semesterSelectChild.attr("value");
-            String value = semesterSelectChild.ownText();
-            rtuPageDataObj.getAvailableSemesterList().put(key, value);
-        }
-
-        List<RtuFacultyObj> rtuFacultyObjList = new ArrayList<>();
-
-        Element programSelect = doc.getElementById("program-id");
-        if (programSelect == null) throw new RuntimeException("No program node found in document");
-
-        Elements programSelectChildren = programSelect.children()
-                .stream()
-                .filter(n -> n.tag().getName().equals("optgroup"))
-                .collect(Collectors.toCollection(Elements::new));
-        if (programSelectChildren.size() == 0) throw new RuntimeException("No programSelectChildren children found in document");
-
-        int id = 0;
-        for (Element programSelectChild : programSelectChildren) {
-            id++;
-            List<RtuFacultyObj.RtuProgramObj> rtuProgramObjList = new ArrayList<>();
-
-            Elements programSelectChildChildren = programSelectChild.children();
-            if (programSelectChildChildren.size() == 0) throw new RuntimeException("No programSelectChildChildren children found in document");
-
-            for (Element programSelectChildChild : programSelectChildChildren) {
-                rtuProgramObjList.add(
-                        new RtuFacultyObj.RtuProgramObj(
-                                programSelectChildChild.attr("value"),
-                                programSelectChildChild.ownText()
-                        )
-                );
-            }
-            rtuFacultyObjList.add(
-                    new RtuFacultyObj(
-                            String.valueOf(id),
-                            programSelectChild.attr("label"),
-                            rtuProgramObjList
-                    )
-            );
-        }
-
-        rtuPageDataObj.setFacultyObjList(rtuFacultyObjList);
-    }
-
     private HashSet<RtuScheduleObj> getRtuSchedule(ChatExtended currentChat) {
         Calendar calendar = Calendar.getInstance();
 
-        String body = "semesterProgramId=" + currentChat.getSelectedSemesterProgramId() +
-                "&year=" + calendar.get(Calendar.YEAR) +
-                "&month=" + calendar.get(Calendar.MONTH);
+        String body = "semesterProgramId=" + currentChat.getSelectedSemesterProgramId()
+                + "&year=" + calendar.get(Calendar.YEAR)
+                + "&month=" + calendar.get(Calendar.MONTH);
 
         String responseBody = getResponseBody("https://nodarbibas.rtu.lv/getSemesterProgEventList", body);
         JSONArray arr = new JSONArray(responseBody);
@@ -432,7 +397,7 @@ public class Bot extends TelegramLongPollingBot {
             }
 
         }
-//        System.out.println(result.toString().length());
+        // System.out.println(result.toString().length());
         return result.toString();
     }
 
@@ -475,6 +440,105 @@ public class Bot extends TelegramLongPollingBot {
     }
 
     /**
+     * Reading files/pages to retrieve data on bot init
+     * * **/
+
+    private void scrapRtuPage() {
+        Document doc;
+        try {
+            doc = Jsoup.connect("https://nodarbibas.rtu.lv").get();
+        } catch (IOException e) {
+            throw new RuntimeException(e);
+        }
+
+        Element semesterSelect = doc.getElementById("semester-id");
+        if (semesterSelect == null) {
+            throw new RuntimeException("No semester node found in document");
+        }
+
+        Elements semesterSelectChildren = semesterSelect.children();
+        if (semesterSelectChildren.size() == 0) {
+            throw new RuntimeException("No semesterSelect children found in document");
+        }
+
+        for (Element semesterSelectChild : semesterSelectChildren) {
+            String key = semesterSelectChild.attr("value");
+            String value = semesterSelectChild.ownText();
+            rtuPageDataObj.getAvailableSemesterList().put(key, value);
+        }
+
+        List<RtuFacultyObj> rtuFacultyObjList = new ArrayList<>();
+
+        Element programSelect = doc.getElementById("program-id");
+        if (programSelect == null) {
+            throw new RuntimeException("No program node found in document");
+        }
+
+        Elements programSelectChildren = programSelect.children()
+                .stream()
+                .filter(n -> n.tag().getName().equals("optgroup"))
+                .collect(Collectors.toCollection(Elements::new));
+        if (programSelectChildren.size() == 0) {
+            throw new RuntimeException("No programSelectChildren children found in document");
+        }
+
+        int id = 0;
+        for (Element programSelectChild : programSelectChildren) {
+            id++;
+            List<RtuFacultyObj.RtuProgramObj> rtuProgramObjList = new ArrayList<>();
+
+            Elements programSelectChildChildren = programSelectChild.children();
+            if (programSelectChildChildren.size() == 0) {
+                throw new RuntimeException("No programSelectChildChildren children found in document");
+            }
+
+            for (Element programSelectChildChild : programSelectChildChildren) {
+                rtuProgramObjList.add(
+                        new RtuFacultyObj.RtuProgramObj(
+                                programSelectChildChild.attr("value"),
+                                programSelectChildChild.ownText()
+                        )
+                );
+            }
+            rtuFacultyObjList.add(
+                    new RtuFacultyObj(
+                            String.valueOf(id),
+                            programSelectChild.attr("label"),
+                            rtuProgramObjList
+                    )
+            );
+        }
+
+        rtuPageDataObj.setFacultyObjList(rtuFacultyObjList);
+    }
+
+    private String[] getRequestHeadersFromFile() {
+        try (FileReader fileReader = new FileReader("request_headers.txt")) {
+            BufferedReader br = new BufferedReader(fileReader);
+            String[] list = br.lines().toArray(String[]::new);
+//            List<String> headerList = new LinkedList<>();
+            LinkedList<String> stack = new LinkedList<>();
+            for (String s : list) {
+                String[] header = s.split(":\\s+");
+                stack.push(header[0]);
+                stack.push(header[1]);
+
+            }
+            String[] list2 = new String[stack.size()];
+            int stackSize = stack.size();
+            for (int i = 0; i < stackSize; i++) {
+                list2[i] = stack.removeLast();
+            }
+
+            return list2;
+        // new String[]{"User-Agent", "Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:107.0) Gecko/20100101 Firefox/107.0", "Accept", "*/*", "Accept-Encoding", "gzip, deflate, br", "Content-Type", "application/x-www-form-urlencoded; charset=UTF-8"}
+
+        } catch (IOException e) {
+            throw new RuntimeException(e);
+        }
+    }
+
+    /**
      * Utils
      * **/
 
@@ -483,7 +547,7 @@ public class Bot extends TelegramLongPollingBot {
                 .uri(new URI(uri))
                 .POST(HttpRequest.BodyPublishers.ofString(body))
                 .version(HttpClient.Version.HTTP_2)
-                .headers(HEADERS)
+                .headers(requestHeaders)
                 .build();
     }
 
