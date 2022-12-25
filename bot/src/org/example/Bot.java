@@ -516,7 +516,6 @@ public class Bot extends TelegramLongPollingBot {
         try (FileReader fileReader = new FileReader("request_headers.txt")) {
             BufferedReader br = new BufferedReader(fileReader);
             String[] list = br.lines().toArray(String[]::new);
-//            List<String> headerList = new LinkedList<>();
             LinkedList<String> stack = new LinkedList<>();
             for (String s : list) {
                 String[] header = s.split(":\\s+");
@@ -529,9 +528,7 @@ public class Bot extends TelegramLongPollingBot {
             for (int i = 0; i < stackSize; i++) {
                 list2[i] = stack.removeLast();
             }
-
             return list2;
-        // new String[]{"User-Agent", "Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:107.0) Gecko/20100101 Firefox/107.0", "Accept", "*/*", "Accept-Encoding", "gzip, deflate, br", "Content-Type", "application/x-www-form-urlencoded; charset=UTF-8"}
 
         } catch (IOException e) {
             throw new RuntimeException(e);
