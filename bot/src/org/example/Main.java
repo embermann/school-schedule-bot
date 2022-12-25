@@ -30,7 +30,7 @@ public class Main {
         Properties properties = new Properties();
         InputStream input;
         try {
-            input = new FileInputStream("bot.properties");
+            input = new FileInputStream("application.properties");
             properties.load(input);
             input.close();
         } catch (IOException e) {
